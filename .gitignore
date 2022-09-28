@@ -1,0 +1,7 @@
+docker-nginx-modsecurity/
+
+logs/
+*.ipynb
+.ipynb_checkpoints/
+__pycache__/
+models/
