@@ -9,7 +9,8 @@ import gym_waf
 import time
 
 import numpy as np
-import time
+import pandas as pd
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -41,8 +42,8 @@ class PPO:
 
         # Extract environment information
         self.env = env
-        self.obs_dim = env.observation_space.shape[0]
-        self.act_dim = env.action_space.n
+        self.obs_dim = env.observation_space.shape[0] # 
+        self.act_dim = env.action_space.n # 9
 
          # Initialize actor and critic networks
         self.actor = policy_class(self.obs_dim, self.act_dim)                                                   # ALG STEP 1
@@ -64,6 +65,16 @@ class PPO:
             'batch_lens': [],       # episodic lengths in batch
             'batch_rews': [],       # episodic returns in batch
             'actor_losses': [],     # losses of actor network in current iteration
+        }
+        
+        self.current_episode = 0
+        self.log = {
+            'episode': [],
+            'steps': [],
+            'win': [],
+            'mean_reward': [],
+            'original_payload': [],
+            'payload': [],
         }
 
     def learn(self, total_timesteps):
@@ -154,6 +165,20 @@ class PPO:
                 torch.save(self.critic.state_dict(), './models/ppo_critic.pth')
                 torch.save(self.env.discriminator.state_dict(), './models/dicriminator.pth')
 
+        # Save Logs
+        df = pd.DataFrame()
+        df['episode'] = self.log['episode']
+        df['steps'] = self.log['steps']
+        df['win'] = self.log['win']
+        df['mean_reward'] = self.log['mean_reward']
+        df['original_payload'] = self.log['original_payload']
+        df['payload'] = self.log['payload']
+        
+        df.to_csv('./logs/generator.csv')
+        
+        print(flush=True)
+        print('Saved log file to ./logs/generator.csv')
+
     def rollout(self):
         """
             Too many transformers references, I'm sorry. This is where we collect the batch of data
@@ -191,6 +216,8 @@ class PPO:
             # Reset the environment. sNote that obs is short for observation. 
             obs = self.env.reset()
             done = False
+            episode_steps = 0
+            self.current_episode += 1
 
             # Run an episode for a maximum of max_timesteps_per_episode timesteps
             for ep_t in range(self.max_timesteps_per_episode):
@@ -199,6 +226,7 @@ class PPO:
                     self.env.render()
 
                 t += 1 # Increment timesteps ran this batch so far
+                episode_steps += 1
 
                 # Track observations in this batch
                 batch_obs.append(obs)
@@ -206,7 +234,7 @@ class PPO:
                 # Calculate action and make a step in the env. 
                 # Note that rew is short for reward.
                 action, score, log_prob = self.get_action(obs)
-                obs, rew, done, _ = self.env.step(action)
+                obs, rew, done, infos = self.env.step(action)
 
                 # Track recent reward, action, and action log probability
                 ep_rews.append(rew)
@@ -215,6 +243,13 @@ class PPO:
 
                 # If the environment tells us the episode is terminated, break
                 if done:
+                    # Log the episode info
+                    self.log['episode'].append(self.current_episode)
+                    self.log['steps'].append(episode_steps)
+                    self.log['mean_reward'].append(np.mean(batch_acts))
+                    self.log['win'].append(infos['win'])
+                    self.log['original_payload'].append(infos['original'])
+                    self.log['payload'].append(infos['payload'])
                     break
 
             # Track episodic lengths and rewards
