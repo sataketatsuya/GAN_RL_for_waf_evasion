@@ -10,9 +10,9 @@ import numpy as np
 
 class FeedForwardNN(nn.Module):
     """
-        A standard in_dim-512-64-out_dim Feed Forward Neural Network.
+        A standard in_dim-64-64-out_dim Feed Forward Neural Network.
     """
-    def __init__(self, in_dim, out_dim):
+    def __init__(self, in_dim, out_dim, dropout=0.1):
         """
             Initialize the network and set up the layers.
 
@@ -25,9 +25,13 @@ class FeedForwardNN(nn.Module):
         """
         super(FeedForwardNN, self).__init__()
 
-        self.layer1 = nn.Linear(in_dim, 512)
-        self.layer2 = nn.Linear(512, 64)
-        self.layer3 = nn.Linear(64, out_dim)
+        self.layer1 = nn.Linear(in_dim, 1024)
+        self.dropout1 = nn.Dropout(dropout)
+        self.layer2 = nn.Linear(1024, 256)
+        self.dropout2 = nn.Dropout(dropout)
+        self.layer3 = nn.Linear(256, 32)
+        self.dropout3 = nn.Dropout(dropout)
+        self.layer4 = nn.Linear(32, out_dim)
 
     def forward(self, obs):
         """
@@ -43,8 +47,9 @@ class FeedForwardNN(nn.Module):
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float)
 
-        activation1 = F.relu(self.layer1(obs))
-        activation2 = F.relu(self.layer2(activation1))
-        output = self.layer3(activation2)
+        activation1 = F.relu(self.dropout1(self.layer1(obs)))
+        activation2 = F.relu(self.dropout2(self.layer2(activation1)))
+        activation3 = F.relu(self.dropout3(self.layer3(activation2)))
+        output = self.layer4(activation3)
 
         return output
