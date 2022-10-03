@@ -1,7 +1,8 @@
 from gym.envs.registration import register
 import os
+import const
 
-MAXTURNS = 10
+MAXTURNS = const.MAXTURNS
 DATASET = os.path.join(os.path.dirname(__file__), 'data', 'sqli-1k.csv')
 DATASET_single = os.path.join(os.path.dirname(__file__), 'data', 'sqli-1.csv')
 CSIC_DATASET = os.path.join(os.path.dirname(__file__), 'data', 'csic_database.csv')

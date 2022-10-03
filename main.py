@@ -10,6 +10,7 @@ import torch
 
 import const
 
+from generator.random import Random
 from generator.arguments import get_args
 from generator.ppo import PPO
 from generator.network import FeedForwardNN
@@ -48,7 +49,15 @@ def train(env, hyperparameters, actor_model, critic_model):
     # Train the PPO model with a specified total timesteps
     # NOTE: You can change the total timesteps here, I put a big number just because
     # you can kill the process whenever you feel like PPO is converging
-    model.learn(total_timesteps=200_000_000)
+    model.learn(total_timesteps=const.TOTAL_TIMESTEPS)
+    
+def random_run(env, **hyperparameters):
+    print(f"Random Agent Run", flush=True)
+    
+    # Create a model for Rondom
+    model = Random(env=env, **hyperparameters)
+    
+    model.run(total_timesteps=const.TOTAL_TIMESTEPS)
 
 def main(args):
     """
@@ -81,7 +90,13 @@ def main(args):
 
     # Train or test, depending on the mode specified
     if args.mode == 'train':
-        train(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model, critic_model=args.critic_model)
+        if args.model == 'ppo':
+            train(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model, critic_model=args.critic_model)
+        elif args.model == 'random':
+            random_run(env=env, hyperparameters=hyperparameters)
+        else:
+            raise NotImplementedError("unsupported model was selected")
+            
     else:
         test(env=env, actor_model=args.actor_model)
 

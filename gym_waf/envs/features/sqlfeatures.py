@@ -5,10 +5,10 @@ import numpy as np
 class SqlFeatureExtractor(object):
 
     def __init__(self):
-        # tokenizer_type = TokenizerType()  # this generates a 12 dimension feature vector
+        tokenizer_type = TokenizerType()  # this generates a 12 dimension feature vector
         tokenizer_tk = TokenizerTK()      # this generates a 702 dimension feature vector
         tokenizer_chr = TokenizerChr()    # this generates a 256 dimension feature vector
-        self.tokenizers = [tokenizer_tk, tokenizer_chr]
+        self.tokenizers = [tokenizer_type, tokenizer_tk, tokenizer_chr]
         self.shape = (sum([tknz.vect_size for tknz in self.tokenizers]),)
 
     def extract(self, payload):
