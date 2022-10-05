@@ -57,6 +57,8 @@ class PPO:
         self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
         self.cov_mat = torch.diag(self.cov_var)
 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         # This logger will help us with printing out summaries of each iteration
         self.logger = {
             'delta_t': time.time_ns(),
@@ -151,7 +153,7 @@ class PPO:
                 self.critic_optim.step()
 
                 # Log actor loss
-                self.logger['actor_losses'].append(actor_loss.detach())
+                self.logger['actor_losses'].append(actor_loss.cpu().detach())
 
             # Update Discriminator Network
             self.env.update_discriminator()
@@ -161,9 +163,23 @@ class PPO:
 
             # Save our model if it's time
             if i_so_far % self.save_freq == 0:
+                # torch.save(self.actor.state_dict(), './models/no_discriminator/ppo_actor.pth')
+                # torch.save(self.critic.state_dict(), './models/no_discriminator/ppo_critic.pth')
                 torch.save(self.actor.state_dict(), './models/ppo_actor.pth')
                 torch.save(self.critic.state_dict(), './models/ppo_critic.pth')
                 torch.save(self.env.discriminator.state_dict(), './models/dicriminator.pth')
+
+                # Save Logs
+                df = pd.DataFrame()
+                df['episode'] = self.log['episode']
+                df['steps'] = self.log['steps']
+                df['win'] = self.log['win']
+                df['mean_reward'] = self.log['mean_reward']
+                df['original_payload'] = self.log['original_payload']
+                df['payload'] = self.log['payload']
+
+                df.to_csv('./logs/generator.csv')
+                # df.to_csv('./logs/no_discriminator.csv')
 
         # Save Logs
         df = pd.DataFrame()
@@ -173,11 +189,9 @@ class PPO:
         df['mean_reward'] = self.log['mean_reward']
         df['original_payload'] = self.log['original_payload']
         df['payload'] = self.log['payload']
-        
+
         df.to_csv('./logs/generator.csv')
-        
-        print(flush=True)
-        print('Saved log file to ./logs/generator.csv')
+        # df.to_csv('./logs/no_discriminator.csv')
 
     def rollout(self):
         """
@@ -233,12 +247,12 @@ class PPO:
 
                 # Calculate action and make a step in the env. 
                 # Note that rew is short for reward.
-                action, score, log_prob = self.get_action(obs)
+                action, action_score, log_prob = self.get_action(obs)
                 obs, rew, done, infos = self.env.step(action)
 
                 # Track recent reward, action, and action log probability
                 ep_rews.append(rew)
-                batch_acts.append(score)
+                batch_acts.append(action_score)
                 batch_log_probs.append(log_prob)
 
                 # If the environment tells us the episode is terminated, break
@@ -246,7 +260,7 @@ class PPO:
                     # Log the episode info
                     self.log['episode'].append(self.current_episode)
                     self.log['steps'].append(episode_steps)
-                    self.log['mean_reward'].append(np.mean(batch_acts))
+                    self.log['mean_reward'].append(np.mean(ep_rews))
                     self.log['win'].append(infos['win'])
                     self.log['original_payload'].append(infos['original'])
                     self.log['payload'].append(infos['payload'])
@@ -259,7 +273,7 @@ class PPO:
         # Reshape data as tensors in the shape specified in function description, before returning
         batch_obs = torch.tensor(np.array(batch_obs), dtype=torch.float)
         batch_acts = torch.tensor(np.array(batch_acts), dtype=torch.float)
-        batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float)
+        batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float).to(self.device)
         batch_rtgs = self.compute_rtgs(batch_rews)                                                              # ALG STEP 4
 
         # Log the episodic returns and episodic lengths in this batch.
@@ -294,7 +308,7 @@ class PPO:
                 batch_rtgs.insert(0, discounted_reward)
 
         # Convert the rewards-to-go into a tensor
-        batch_rtgs = torch.tensor(batch_rtgs, dtype=torch.float)
+        batch_rtgs = torch.tensor(batch_rtgs, dtype=torch.float).to(self.device)
 
         return batch_rtgs
 
@@ -357,7 +371,7 @@ class PPO:
 
         # Return the value vector V of each observation in the batch
         # and log probabilities log_probs of each action in the batch
-        return V, log_probs
+        return V.to(self.device), log_probs.to(self.device)
 
     def _init_hyperparameters(self, hyperparameters):
         """

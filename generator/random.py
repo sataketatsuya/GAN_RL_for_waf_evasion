@@ -63,20 +63,18 @@ class Random:
 
             # Print a summary of our training so far
             self._log_summary()
+            
+            if i_so_far % self.save_freq == 0:
+                # Save Logs
+                df = pd.DataFrame()
+                df['episode'] = self.log['episode']
+                df['steps'] = self.log['steps']
+                df['win'] = self.log['win']
+                df['mean_reward'] = self.log['mean_reward']
+                df['original_payload'] = self.log['original_payload']
+                df['payload'] = self.log['payload']
 
-        # Save Logs
-        df = pd.DataFrame()
-        df['episode'] = self.log['episode']
-        df['steps'] = self.log['steps']
-        df['win'] = self.log['win']
-        df['mean_reward'] = self.log['mean_reward']
-        df['original_payload'] = self.log['original_payload']
-        df['payload'] = self.log['payload']
-        
-        df.to_csv('./logs/random.csv')
-        
-        print(flush=True)
-        print('Saved log file to ./logs/random.csv')
+                df.to_csv('./logs/random.csv')
 
     def rollout(self):
         # Batch data. For more details, check function header.
@@ -118,7 +116,7 @@ class Random:
                 # Log the episode info
                 self.log['episode'].append(self.current_episode)
                 self.log['steps'].append(episode_steps)
-                self.log['mean_reward'].append(np.mean(batch_acts))
+                self.log['mean_reward'].append(np.mean(ep_rews))
                 self.log['win'].append(infos['win'])
                 self.log['original_payload'].append(infos['original'])
                 self.log['payload'].append(infos['payload'])
@@ -144,7 +142,7 @@ class Random:
         # Miscellaneous parameters
         self.render = True                              # If we should render during rollout
         self.render_every_i = 10                        # Only render every n iterations
-        self.save_freq = 10                             # How often we save in number of iterations
+        self.save_freq = 100                            # How often we save in number of iterations
 
     def _log_summary(self):
         t_so_far = self.logger['t_so_far']

@@ -50,7 +50,7 @@ def train(env, hyperparameters, actor_model, critic_model):
     # NOTE: You can change the total timesteps here, I put a big number just because
     # you can kill the process whenever you feel like PPO is converging
     model.learn(total_timesteps=const.TOTAL_TIMESTEPS)
-    
+
 def random_run(env, **hyperparameters):
     print(f"Random Agent Run", flush=True)
     
@@ -58,6 +58,39 @@ def random_run(env, **hyperparameters):
     model = Random(env=env, **hyperparameters)
     
     model.run(total_timesteps=const.TOTAL_TIMESTEPS)
+
+def test(env, actor_model):
+    """
+        Tests the model.
+        Parameters:
+            env - the environment to test the policy on
+            actor_model - the actor model to load in
+        Return:
+            None
+    """
+    print(f"Testing {actor_model}", flush=True)
+
+    # If the actor model is not specified, then exit
+    if actor_model == '':
+        print(f"Didn't specify model file. Exiting.", flush=True)
+        sys.exit(0)
+
+    # Extract out dimensions of observation and action spaces
+    obs_dim = env.observation_space.shape[0]
+    act_dim = env.action_space.shape[0]
+
+    # Build our policy the same way we build our actor model in PPO
+    policy = FeedForwardNN(obs_dim, act_dim)
+
+    # Load in the actor model saved by the PPO algorithm
+    policy.load_state_dict(torch.load(actor_model))
+
+    # Evaluate our policy with a separate module, eval_policy, to demonstrate
+    # that once we are done training the model/policy with ppo.py, we no longer need
+    # ppo.py since it only contains the training algorithm. The model/policy itself exists
+    # independently as a binary file that can be loaded in with torch.
+    eval_policy(policy=policy, env=env, render=False)
+    
 
 def main(args):
     """

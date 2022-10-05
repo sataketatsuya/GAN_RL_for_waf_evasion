@@ -38,6 +38,8 @@ class WafEnv(gym.Env):
         self.payload = None
         self.observation = None
         self.turns = 0
+        
+        self.check_discriminator = True
 
         self._load_payloads(payloads_file)
         self._load_csic_http_traffic(csic_file)

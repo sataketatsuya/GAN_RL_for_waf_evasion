@@ -28,7 +28,7 @@ class WafLabelEnv(WafEnv):
             if check_discriminator:
                 score_discriminator = self._get_score_discriminator(fake_payload)
             else:
-                score_discriminator = None
+                score_discriminator = 0
         except ClassificationFailure:
             logging.warning("Failed to classify payload: {}".format(colored(repr(self.payload), 'red')))
             label = 0   # assume evasion due to implementation bug in classifier
@@ -46,7 +46,7 @@ class WafLabelEnv(WafEnv):
 
         win = False
         # get reward
-        label, score_discriminator = self._check_sqli(self.payload)
+        label, score_discriminator = self._check_sqli(self.payload, check_discriminator=self.check_discriminator)
         reward = score_discriminator
 
         if label:
