@@ -10,12 +10,13 @@ import time
 
 import numpy as np
 import pandas as pd
+from collections import Counter
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam
-from torch.distributions import MultivariateNormal
+from torch.distributions.categorical import Categorical
 
 class PPO:
     """
@@ -39,25 +40,27 @@ class PPO:
 
         # Initialize hyperparameters for training with PPO
         self._init_hyperparameters(hyperparameters)
+        self.directory_name = 'paper_ep_batch'
 
         # Extract environment information
         self.env = env
         self.obs_dim = env.observation_space.shape[0] # 
         self.act_dim = env.action_space.n # 9
+        
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
          # Initialize actor and critic networks
-        self.actor = policy_class(self.obs_dim, self.act_dim)                                                   # ALG STEP 1
-        self.critic = policy_class(self.obs_dim, 1)
+        self.actor = policy_class(self.obs_dim, self.act_dim, self.device)                                                   # ALG STEP 1
+        self.actor.to(self.device)
+
+        self.critic = policy_class(self.obs_dim, 1, self.device)
+        self.critic.to(self.device)
 
         # Initialize optimizers for actor and critic
-        self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
-        self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
-
-        # Initialize the covariance matrix used to query the actor for actions
-        self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
-        self.cov_mat = torch.diag(self.cov_var)
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.optimizer = torch.optim.Adam([
+            {'params': self.actor.parameters(), 'lr': self.lr},
+            {'params': self.critic.parameters(), 'lr': self.lr}
+        ])
 
         # This logger will help us with printing out summaries of each iteration
         self.logger = {
@@ -66,12 +69,14 @@ class PPO:
             'i_so_far': 0,          # iterations so far
             'batch_lens': [],       # episodic lengths in batch
             'batch_rews': [],       # episodic returns in batch
-            'actor_losses': [],     # losses of actor network in current iteration
+            'total_loss': [],       # losses of actor network in current iteration
+            'entropy': [],          # entropy mean
         }
-        
+
         self.current_episode = 0
         self.log = {
             'episode': [],
+            'time_steps': [],
             'steps': [],
             'win': [],
             'mean_reward': [],
@@ -79,36 +84,36 @@ class PPO:
             'payload': [],
         }
 
-    def learn(self, total_timesteps):
+    def learn(self, total_episodes):
         """
             Train the actor and critic networks. Here is where the main PPO algorithm resides.
 
             Parameters:
-                total_timesteps - the total number of timesteps to train for
+                total_episodes - the total number of episodes to train for
 
             Return:
                 None
         """
         print(f"Learning... Running {self.max_timesteps_per_episode} timesteps per episode, ", end='')
-        print(f"{self.timesteps_per_batch} timesteps per batch for a total of {total_timesteps} timesteps")
-        t_so_far = 0 # Timesteps simulated so far
+        print(f"{self.episode_per_batch} episodes per batch for a total of {total_episodes} episodes")
+        t_so_far = 0 # Episodes simulated so far
         i_so_far = 0 # Iterations ran so far
-        while t_so_far < total_timesteps:                                                                       # ALG STEP 2
+        while t_so_far < total_episodes:                                                                       # ALG STEP 2
             # Autobots, roll out (just kidding, we're collecting our batch simulations here)
             batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens = self.rollout()                     # ALG STEP 3
 
-            # Calculate how many timesteps we collected this batch
+            # Calculate how many episodes we collected this batch
             t_so_far += np.sum(batch_lens)
 
             # Increment the number of iterations
             i_so_far += 1
 
-            # Logging timesteps so far and iterations so far
+            # Logging episodes so far and iterations so far
             self.logger['t_so_far'] = t_so_far
             self.logger['i_so_far'] = i_so_far
 
             # Calculate advantage at k-th iteration
-            V, _ = self.evaluate(batch_obs, batch_acts)
+            V, _, _ = self.evaluate(batch_obs, batch_acts) # Critic evaluatation
             A_k = batch_rtgs - V.detach()                                                                       # ALG STEP 5
 
             # One of the only tricks I use that isn't in the pseudocode. Normalizing advantages
@@ -120,7 +125,7 @@ class PPO:
             # This is the loop where we update our network for some n epochs
             for _ in range(self.n_updates_per_iteration):                                                       # ALG STEP 6 & 7
                 # Calculate V_pi and pi_theta(a_t | s_t)
-                V, curr_log_probs = self.evaluate(batch_obs, batch_acts)
+                V, curr_log_probs, dist_entropy = self.evaluate(batch_obs, batch_acts)
 
                 # Calculate the ratio pi_theta(a_t | s_t) / pi_theta_k(a_t | s_t)
                 # NOTE: we just subtract the logs, which is the same as
@@ -129,11 +134,11 @@ class PPO:
                 # here's a great explanation: 
                 # https://cs.stackexchange.com/questions/70518/why-do-we-use-the-log-in-gradient-based-reinforcement-algorithms
                 # TL;DR makes gradient ascent easier behind the scenes.
-                ratios = torch.exp(curr_log_probs - batch_log_probs)
+                importance_ratios = torch.exp(curr_log_probs - batch_log_probs)
 
                 # Calculate surrogate losses.
-                surr1 = ratios * A_k
-                surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * A_k
+                surr1 = importance_ratios * A_k
+                surr2 = torch.clamp(importance_ratios, 1 - self.clip, 1 + self.clip) * A_k
 
                 # Calculate actor and critic losses.
                 # NOTE: we take the negative min of the surrogate losses because we're trying to maximize
@@ -142,56 +147,58 @@ class PPO:
                 actor_loss = (-torch.min(surr1, surr2)).mean()
                 critic_loss = nn.MSELoss()(V, batch_rtgs)
 
-                # Calculate gradients and perform backward propagation for actor network
-                self.actor_optim.zero_grad()
-                actor_loss.backward(retain_graph=True)
-                self.actor_optim.step()
+                total_loss = actor_loss + self.vf_coefficient*critic_loss + self.en_coefficient*dist_entropy.mean()
 
-                # Calculate gradients and perform backward propagation for critic network
-                self.critic_optim.zero_grad()
-                critic_loss.backward()
-                self.critic_optim.step()
+                # Calculate gradients and perform backward propagation for actor network and critic network
+                self.optimizer.zero_grad()
+                total_loss.backward(retain_graph=True)
+                self.optimizer.step()
 
                 # Log actor loss
-                self.logger['actor_losses'].append(actor_loss.cpu().detach())
+                self.logger['total_loss'].append(total_loss.cpu().detach())
+                self.logger['entropy'].append(dist_entropy.mean().cpu().detach())
 
-            # Update Discriminator Network
-            self.env.update_discriminator()
+            if self.env.check_discriminator:
+                # Update Discriminator Network
+                self.env.update_discriminator()
 
             # Print a summary of our training so far
-            self._log_summary()
+            
+            self._log_summary(list(batch_acts.cpu().detach().numpy().copy()))
 
             # Save our model if it's time
             if i_so_far % self.save_freq == 0:
-                # torch.save(self.actor.state_dict(), './models/no_discriminator/ppo_actor.pth')
-                # torch.save(self.critic.state_dict(), './models/no_discriminator/ppo_critic.pth')
-                torch.save(self.actor.state_dict(), './models/ppo_actor.pth')
-                torch.save(self.critic.state_dict(), './models/ppo_critic.pth')
-                torch.save(self.env.discriminator.state_dict(), './models/dicriminator.pth')
+                torch.save(self.actor.state_dict(), f'./models/{self.directory_name}/ppo_actor.pth')
+                torch.save(self.critic.state_dict(), f'./models/{self.directory_name}/ppo_critic.pth')
+
+                if self.env.check_discriminator:
+                    torch.save(self.env.discriminator.state_dict(), f'./models/{self.directory_name}/dicriminator.pth')
 
                 # Save Logs
                 df = pd.DataFrame()
                 df['episode'] = self.log['episode']
+                df['time_steps'] = self.log['time_steps']
                 df['steps'] = self.log['steps']
                 df['win'] = self.log['win']
                 df['mean_reward'] = self.log['mean_reward']
                 df['original_payload'] = self.log['original_payload']
                 df['payload'] = self.log['payload']
 
-                df.to_csv('./logs/generator.csv')
-                # df.to_csv('./logs/no_discriminator.csv')
+                df.to_csv(f'./logs/{self.directory_name}.csv')
 
         # Save Logs
         df = pd.DataFrame()
         df['episode'] = self.log['episode']
+        df['time_steps'] = self.log['time_steps']
         df['steps'] = self.log['steps']
         df['win'] = self.log['win']
         df['mean_reward'] = self.log['mean_reward']
         df['original_payload'] = self.log['original_payload']
         df['payload'] = self.log['payload']
 
-        df.to_csv('./logs/generator.csv')
-        # df.to_csv('./logs/no_discriminator.csv')
+        df.to_csv(f'./logs/{self.directory_name}.csv')
+        
+        print(f'Saved to ./logs/{self.directory_name}.csv')
 
     def rollout(self):
         """
@@ -221,10 +228,12 @@ class PPO:
         # upon each new episode
         ep_rews = []
 
-        t = 0 # Keeps track of how many timesteps we've run so far this batch
+        t = 0 # Keeps track of how many episodes we've run so far this batch
+        time_steps = self.logger['t_so_far']
 
-        # Keep simulating until we've run more than or equal to specified timesteps per batch
-        while t < self.timesteps_per_batch:
+        # Run an episode for a maximum of max_timesteps_per_episode timesteps
+        for ep_t in range(self.episode_per_batch):
+            # Keep simulating until we've run more than or equal to specified timesteps per batch
             ep_rews = [] # rewards collected per episode
 
             # Reset the environment. sNote that obs is short for observation. 
@@ -233,32 +242,33 @@ class PPO:
             episode_steps = 0
             self.current_episode += 1
 
-            # Run an episode for a maximum of max_timesteps_per_episode timesteps
-            for ep_t in range(self.max_timesteps_per_episode):
+            while not done:
                 # If render is specified, render the environment
                 if self.render and (self.logger['i_so_far'] % self.render_every_i == 0) and len(batch_lens) == 0:
                     self.env.render()
 
                 t += 1 # Increment timesteps ran this batch so far
                 episode_steps += 1
+                time_steps += 1
 
                 # Track observations in this batch
                 batch_obs.append(obs)
 
                 # Calculate action and make a step in the env. 
                 # Note that rew is short for reward.
-                action, action_score, log_prob = self.get_action(obs)
+                action, log_prob = self.get_action(obs)
                 obs, rew, done, infos = self.env.step(action)
 
                 # Track recent reward, action, and action log probability
                 ep_rews.append(rew)
-                batch_acts.append(action_score)
+                batch_acts.append(action)
                 batch_log_probs.append(log_prob)
 
                 # If the environment tells us the episode is terminated, break
                 if done:
                     # Log the episode info
                     self.log['episode'].append(self.current_episode)
+                    self.log['time_steps'].append(time_steps)
                     self.log['steps'].append(episode_steps)
                     self.log['mean_reward'].append(np.mean(ep_rews))
                     self.log['win'].append(infos['win'])
@@ -323,26 +333,24 @@ class PPO:
                 action - the action to take, as a numpy array
                 log_prob - the log probability of the selected action in the distribution
         """
+        with torch.no_grad():
+            # Convert observation to tensor if it's a numpy array
+            obs = torch.FloatTensor(obs).to(self.device).clone()
+
         # Query the actor network for a mean action
         mean = self.actor(obs)
 
-        # Create a distribution with the mean action and std from the covariance matrix above.
-        # For more information on how this distribution works, check out Andrew Ng's lecture on it:
-        # https://www.youtube.com/watch?v=JjB58InuTqM
-        dist = MultivariateNormal(mean, self.cov_mat)
-        score = dist.sample()
-
-        # Sample an action from the distribution
-        prob = F.softmax(score, dim=0)
-
-        # sample from the distribution over commands
-        action = prob.multinomial(num_samples=1).squeeze().item()
+        # Create a distribution with the mean action
+        # Note that this is equivalent to what used to be called multinomial
+        dist = Categorical(F.softmax(mean, dim=-1))
+        # print(F.softmax(mean, dim=-1))
+        action = dist.sample()
 
         # Calculate the log probability for that action
-        log_prob = dist.log_prob(score)
+        log_prob = dist.log_prob(action)
 
         # Return the sampled action and the log probability of that action in our distribution
-        return action, score.detach().numpy(), log_prob.detach()
+        return action.item(), log_prob.detach()
 
     def evaluate(self, batch_obs, batch_acts):
         """
@@ -361,17 +369,25 @@ class PPO:
                 log_probs - the log probabilities of the actions taken in batch_acts given batch_obs
         """
         # Query critic network for a value V for each batch_obs. Shape of V should be same as batch_rtgs
+        with torch.no_grad():
+            # Convert observation to tensor if it's a numpy array
+            batch_obs = batch_obs.to(self.device).clone()
+            batch_acts = batch_acts.to(self.device).clone()
+
         V = self.critic(batch_obs).squeeze()
 
         # Calculate the log probabilities of batch actions using most recent actor network.
         # This segment of code is similar to that in get_action()
         mean = self.actor(batch_obs)
-        dist = MultivariateNormal(mean, self.cov_mat)
+
+        dist = Categorical(F.softmax(mean, dim=-1))
         log_probs = dist.log_prob(batch_acts)
+
+        dist_entropy = dist.entropy()
 
         # Return the value vector V of each observation in the batch
         # and log probabilities log_probs of each action in the batch
-        return V.to(self.device), log_probs.to(self.device)
+        return V, log_probs, dist_entropy
 
     def _init_hyperparameters(self, hyperparameters):
         """
@@ -412,7 +428,7 @@ class PPO:
             torch.manual_seed(self.seed)
             print(f"Successfully set seed to {self.seed}")
 
-    def _log_summary(self):
+    def _log_summary(self, batch_acts):
         """
             Print to stdout what we've logged so far in the most recent batch.
 
@@ -434,14 +450,16 @@ class PPO:
         i_so_far = self.logger['i_so_far']
         avg_ep_lens = np.mean(self.logger['batch_lens'])
         avg_ep_rews = np.mean([np.sum(ep_rews) for ep_rews in self.logger['batch_rews']])
-        avg_actor_loss = np.mean([losses.float().mean() for losses in self.logger['actor_losses']])
+        avg_actor_loss = np.mean([losses.float().mean() for losses in self.logger['total_loss']])
         avg_discriminator_loss = np.mean([losses.float().mean() for losses in self.env.logger['discriminator_losses']])
+        avg_entropy = np.mean([losses.float().mean() for losses in self.logger['entropy']])
 
         # Round decimal places for more aesthetic logging messages
         avg_ep_lens = str(round(avg_ep_lens, 2))
         avg_ep_rews = str(round(avg_ep_rews, 2))
         avg_actor_loss = str(round(avg_actor_loss, 5))
         avg_discriminator_loss = str(round(avg_discriminator_loss, 5))
+        avg_entropy = str(round(avg_entropy, 5))
 
         # Print logging statements
         print(flush=True)
@@ -450,13 +468,16 @@ class PPO:
         print(f"Average Episodic Return: {avg_ep_rews}", flush=True)
         print(f"Average Generator Loss: {avg_actor_loss}", flush=True)
         print(f"Average Discriminator Loss: {avg_discriminator_loss}", flush=True)
-        print(f"Timesteps So Far: {t_so_far}", flush=True)
+        print(f"Average Entropy: {avg_entropy}", flush=True)
+        print(f"Episodes So Far: {t_so_far}", flush=True)
         print(f"Iteration took: {delta_t} secs", flush=True)
+        print(Counter(batch_acts), flush=True)
         print(f"------------------------------------------------------", flush=True)
         print(flush=True)
 
         # Reset batch-specific logging data
         self.logger['batch_lens'] = []
         self.logger['batch_rews'] = []
-        self.logger['actor_losses'] = []
+        self.logger['total_loss'] = []
         self.env.logger['discriminator_losses'] = []
+        self.env.logger['entropy'] = []

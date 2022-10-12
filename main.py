@@ -49,7 +49,7 @@ def train(env, hyperparameters, actor_model, critic_model):
     # Train the PPO model with a specified total timesteps
     # NOTE: You can change the total timesteps here, I put a big number just because
     # you can kill the process whenever you feel like PPO is converging
-    model.learn(total_timesteps=const.TOTAL_TIMESTEPS)
+    model.learn(total_episodes=const.TOTAL_EPISODES)
 
 def random_run(env, **hyperparameters):
     print(f"Random Agent Run", flush=True)
@@ -57,7 +57,7 @@ def random_run(env, **hyperparameters):
     # Create a model for Rondom
     model = Random(env=env, **hyperparameters)
     
-    model.run(total_timesteps=const.TOTAL_TIMESTEPS)
+    model.run(total_episodes=const.TOTAL_EPISODES)
 
 def test(env, actor_model):
     """
@@ -106,7 +106,6 @@ def main(args):
     # ArgumentParser because it's too annoying to type them every time at command line. Instead, you can change them here.
     # To see a list of hyperparameters, look in ppo.py at function _init_hyperparameters
     hyperparameters = {
-        'timesteps_per_batch': const.TIMESTEP_PER_BATCH, 
         'episode_per_batch': const.EPISODE_PER_BATCH,
         'max_timesteps_per_episode': const.MAX_TIMESTEPS_PER_EPISODE, 
         'gamma': const.GAMMA, 
