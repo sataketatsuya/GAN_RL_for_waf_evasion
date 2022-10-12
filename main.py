@@ -107,11 +107,14 @@ def main(args):
     # To see a list of hyperparameters, look in ppo.py at function _init_hyperparameters
     hyperparameters = {
         'timesteps_per_batch': const.TIMESTEP_PER_BATCH, 
+        'episode_per_batch': const.EPISODE_PER_BATCH,
         'max_timesteps_per_episode': const.MAX_TIMESTEPS_PER_EPISODE, 
         'gamma': const.GAMMA, 
         'n_updates_per_iteration': const.N_UPDATES_PER_ITERATION,
         'lr': const.G_LR, 
         'clip': const.CLIP,
+        'vf_coefficient': const.VALUE_FUNC_COEFFICIENT,
+        'en_coefficient': const.ENTROPY_COEFFICIENT,
         'render': False,
         'render_every_i': const.RENDER_EVERY_I
     }
