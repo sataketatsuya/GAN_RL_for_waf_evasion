@@ -10,4 +10,4 @@ class LibinjectionInterface(LocalInterface):
         result = is_sql_injection(payload)
         if result is None:
             raise ClassificationFailure('WAF-Brain classifier returns None')
-        return result['is_sqli']
+        return not result['is_sqli']

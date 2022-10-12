@@ -58,9 +58,16 @@ class LibinjectionEnv(WafLabelEnv):
     def _get_real_traffic(self): # get a real traffic randomly from HTTP DATASET CSIC 2010
         return random.choice(self.csic_http_traffic_list)
 
+    def _get_fake_url(self, fake_payload):
+        query_parameter = random.choice(self.query_parameter_list)
+        fake_url = const.BASE_URL + '?' + query_parameter + '=' + fake_payload
+        
+        return fake_url
+
     def _get_fake_traffic(self, fake_payload):
         j_session_id = str(binascii.b2a_hex(os.urandom(16)).upper())[2:-1]
-        fake_traffic = 'Type:Normal,Method:GET,User-Agent:Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko),Pragma:no-cache,Cache-Control:no-cache,Accept:text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5,Accept-encoding:x-gzip, x-deflate, gzip, deflate,Accept-charset:utf-8, utf-8;q=0.5, *;q=0.5,language:en,host:localhost:8080,cookie:JSESSIONID={},content-type:nan,connection:close,lenght:nan,content:nan,classification:0,URL:{} HTTP/1.1'.format(j_session_id, fake_payload)
+        fake_url = self._get_fake_url(fake_payload)
+        fake_traffic = 'Type:Normal,Method:GET,User-Agent:Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko),Pragma:no-cache,Cache-Control:no-cache,Accept:text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5,Accept-encoding:x-gzip, x-deflate, gzip, deflate,Accept-charset:utf-8, utf-8;q=0.5, *;q=0.5,language:en,host:localhost:8080,cookie:JSESSIONID={},content-type:nan,connection:close,lenght:nan,content:nan,classification:0,URL:{} HTTP/1.1'.format(j_session_id, fake_url)
 
         return fake_traffic
 

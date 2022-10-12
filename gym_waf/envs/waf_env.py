@@ -26,20 +26,23 @@ class WafEnv(gym.Env):
         self.action_space = gym.spaces.Discrete(len(ACTION_LOOKUP))
         self.maxturns = maxturns
         self.feature_extractor = SqlFeatureExtractor()
-        logging.debug("Feature vector shape: {}".format(self.feature_extractor.shape))
+        print("Feature vector shape: {}".format(self.feature_extractor.shape))
         self.history = []
         self.payload_list = None
-        self.max_reward = const.WAF_REWARD + 1.0    # waf evasion reward + dicriminator reward
-        self.min_reward = 0.0
+        # self.max_reward = const.WAF_POSITIVE + 1.0 # waf evasion positive reward + dicriminator real value
+        # self.min_reward = const.WAF_NEGATIVE - 1.0 # waf evasion negative reward + dicriminator fake value
+        self.max_reward = const.WAF_POSITIVE + self.maxturns*0.1
+        self.min_reward = -self.maxturns*0.1
         self.orig_payload = None
         self.observation_space = gym.spaces.Box(low=0., high=1., shape=self.feature_extractor.shape, dtype=np.float32)
         self.turn_penalty = turn_penalty
 
         self.payload = None
+        self.pre_payload = None
         self.observation = None
         self.turns = 0
         
-        self.check_discriminator = True
+        self.check_discriminator = const.CHECK_DISCRIMINATOR
 
         self._load_payloads(payloads_file)
         self._load_csic_http_traffic(csic_file)
@@ -48,11 +51,11 @@ class WafEnv(gym.Env):
         try:
             with open(filepath, 'r', encoding='UTF-8') as f:
                 self.payload_list = f.read().splitlines()
-                logging.debug("{} payloads dataset loaded".format(len(self.payload_list)))
+                print("{} payloads dataset loaded".format(len(self.payload_list)))
         except OSError as e:
             logging.error("failed to load dataset from {}".format(filepath))
             raise
-            
+
     def _load_csic_http_traffic(self, filepath):
         try:
             def normalize_url(url):
@@ -73,7 +76,9 @@ class WafEnv(gym.Env):
                     tmp_item_list.append(col + ':' + str(item[col]))
                 self.csic_http_traffic_list.append(','.join(tmp_item_list))
                 
-            logging.debug("{} csic http traffic dataset loaded".format(len(self.csic_http_traffic_list)))
+            self.query_parameter_list = ['id', 'nombre', 'precio', 'cantidad', 'B1']
+                
+            print("{} csic http traffic dataset loaded".format(len(self.csic_http_traffic_list)))
         except OSError as e:
             logging.error("failed to load dataset from {}".format(fileopath))
 
@@ -86,8 +91,9 @@ class WafEnv(gym.Env):
     def _take_action(self, action_index):
         assert action_index < len(ACTION_LOOKUP)
         action = ACTION_LOOKUP[action_index]
-        logging.debug(action.__name__)
+        logging.debug(action.__name__, action_index)
         self.history.append(action)
+        self.pre_payload = self.payload
         self.payload = action(self.payload, seed=SEED)
 
     def _process_reward(self, reward):
@@ -100,8 +106,8 @@ class WafEnv(gym.Env):
 
         while True:     # until find one that is SQLi by the interface
             payload = random.choice(self.payload_list)
-            label, _ = self._check_sqli(payload, check_discriminator=False)
-            if not label:
+            _ = self._check_sqli(payload, check_discriminator=False)
+            if not self.label:
                 self.orig_payload = self.payload = payload
                 break
 

@@ -24,7 +24,7 @@ class WafLabelEnv(WafEnv):
 
     def _check_sqli(self, fake_payload, check_discriminator=True):
         try:
-            label = self._get_label_waf(fake_payload)
+            self.label = self._get_label_waf(fake_payload)
             if check_discriminator:
                 score_discriminator = self._get_score_discriminator(fake_payload)
             else:
@@ -32,9 +32,8 @@ class WafLabelEnv(WafEnv):
         except ClassificationFailure:
             logging.warning("Failed to classify payload: {}".format(colored(repr(self.payload), 'red')))
             label = 0   # assume evasion due to implementation bug in classifier
-        self.label = label
 
-        return label, score_discriminator
+        return score_discriminator
 
     def step(self, action_index):
         assert self.orig_payload is not None, "please reset() before step()"
@@ -46,21 +45,21 @@ class WafLabelEnv(WafEnv):
 
         win = False
         # get reward
-        label, score_discriminator = self._check_sqli(self.payload, check_discriminator=self.check_discriminator)
-        reward = score_discriminator
+        reward = self._check_sqli(self.payload, check_discriminator=self.check_discriminator)
 
-        if label:
-            reward += const.WAF_REWARD
+        if self.label:
+            reward += const.WAF_POSITIVE
             episode_over = True
             win = True
-            logging.debug("WIN with payload: {}".format(colored(repr(self.payload), 'green')))
+            print("WIN with payload: {}".format(colored(repr(self.payload), 'green')))
         elif self.turns >= self.maxturns:
             # out of turns :(
-            reward += 0.0
+            reward += const.WAF_NEGATIVE
             episode_over = True
         else:
-            reward += 0.0
+            # reward += 0.0 if self.pre_payload == self.payload else 0.5
             episode_over = False
+
         reward = self._process_reward(reward)
 
         if episode_over:
