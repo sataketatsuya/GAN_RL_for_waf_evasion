@@ -44,7 +44,7 @@ class PPO:
         self._init_hyperparameters(hyperparameters)
 
         # Log setting
-        self.directory_name = 'multiagent_clip01'
+        self.directory_name = 'FFN'
         os.makedirs(f'./models/generator/{self.directory_name}', exist_ok=True)
         os.makedirs(f'./models/discriminator/{self.directory_name}', exist_ok=True)
         os.makedirs(f'./logs/generator/', exist_ok=True)
@@ -468,7 +468,7 @@ class PPO:
         self.logger['entropy']    = []
         self.env.discriminator.logger['total_loss'] = []
         self.env.discriminator.logger['entropy'] = []
-        
+
     def save_log_to_csv(self, end=False):
         # Save Generator's Logs
         df = pd.DataFrame()
@@ -495,25 +495,28 @@ class PPO:
         df.to_csv(f'./logs/discriminator/{self.directory_name}.csv')
 
         if end:
-            with open(f'./logs/generator/{self.directory_name}.csv') as f:
-                count = 0
-                data = []
-                previous_i = 0
-                index = 0
-                for line in f:
-                    if count == 0:
-                        data.append(line[:-1])
-                        count = 1
-                    else:
-                        split = line.split(',')
-                        if re.fullmatch('[0-9]+', split[0]):
-                            data.append(line[:-1])
-                        else:
-                            line = data[-1] + line
-                            data[-1] = line[:-1]
+            self.trim_csv(f'./logs/generator/{self.directory_name}.csv')
+            self.trim_csv(f'./logs/discriminator/{self.directory_name}.csv')
 
-            with open(f'./logs/generator/new_{self.directory_name}.csv', mode='w') as f:
-                f.write('\n'.join(data))
-
-            print(f'Saved to ./logs/generator/new_{self.directory_name}.csv')
+            print(f'Saved to ./logs/generator/{self.directory_name}.csv')
             print(f'Saved to ./logs/discriminator/{self.directory_name}.csv')
+
+    def trim_csv(file_path):
+        with open(file_path) as f:
+            count = 0
+            data = []
+            index = 0
+            for line in f:
+                if count == 0:
+                    data.append(line[:-1])
+                    count = 1
+                else:
+                    split = line.split(',')
+                    if re.fullmatch('[0-9]+', split[0]):
+                        data.append(line[:-1])
+                    else:
+                        line = data[-1] + line
+                        data[-1] = line[:-1]
+
+        with open(file_path, mode='w') as f:
+            f.write('\n'.join(data))
