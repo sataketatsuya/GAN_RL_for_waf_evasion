@@ -9,40 +9,58 @@ import const
 
 import torch
 from torch.autograd import Variable
-from discriminator.discriminator import Discriminator
-from transformers import BertTokenizer
+# from discriminator.discriminator import Discriminator
+# from transformers import BertTokenizer
+
+from discriminator.ppo import PPO
+from discriminator.network import FeedForwardNN
 
 
 class LibinjectionEnv(WafLabelEnv):
-    def __init__(self, payloads_file, csic_file, maxturns=20):
-        super().__init__(payloads_file, csic_file, maxturns=maxturns)
+    def __init__(self, payloads_file, csic_file, maxturns=20, turn_penalty=0.1):
+        super().__init__(payloads_file, csic_file, maxturns=maxturns, turn_penalty=turn_penalty)
         self.interface = LibinjectionInterface()
-
-        # Loss function
-        self.adversarial_loss = torch.nn.BCELoss() # Binary Cross Entropy Loss
         
-        # Tokenizer
-        self.tokenizer = BertTokenizer.from_pretrained(const.PRETRAINED_MODEL)
-        
-        # Discriminator
-        self.discriminator = Discriminator(const.PRETRAINED_MODEL, const.DROP_OUT)
-        
-        # if os.path.exists('./models/dicriminator.pth'):
-        #     self.discriminator.load_state_dict(torch.load('./models/dicriminator.pth'))
-
-        # Optimizer
-        self.optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=const.D_LR)
-
         self.cuda = torch.cuda.is_available()
         self.device = torch.device("cuda" if self.cuda else "cpu")
-
-        if self.cuda:
-            self.adversarial_loss.to(self.device)
-            self.discriminator.to(self.device)
-
-        self.batch_real_output = []
-        self.batch_fake_output = []
         
+#         # Loss function
+#         self.adversarial_loss = torch.nn.BCELoss() # Binary Cross Entropy Loss
+        
+#         # Tokenizer
+#         self.tokenizer = BertTokenizer.from_pretrained(const.PRETRAINED_MODEL)
+
+#         # Discriminator
+#         self.discriminator = Discriminator(const.PRETRAINED_MODEL, const.DROP_OUT)
+        
+#         if os.path.exists('./models/dicriminator.pth'):
+#             self.discriminator.load_state_dict(torch.load('./models/dicriminator.pth'))
+
+#         # Optimizer
+#         self.optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=const.D_LR)
+
+#         if self.cuda:
+#             self.adversarial_loss.to(self.device)
+#             self.discriminator.to(self.device)
+
+#         self.batch_real_output = []
+#         self.batch_fake_output = []
+
+        hyperparameters = {
+            'episode_per_batch': const.EPISODE_PER_BATCH,
+            'max_timesteps_per_episode': const.MAX_TIMESTEPS_PER_EPISODE, 
+            'gamma': const.GAMMA, 
+            'n_updates_per_iteration': const.N_UPDATES_PER_ITERATION,
+            'lr': const.G_LR, 
+            'clip': const.CLIP,
+            'vf_coefficient': const.VALUE_FUNC_COEFFICIENT,
+            'en_coefficient': const.ENTROPY_COEFFICIENT,
+            'render': False,
+            'render_every_i': const.RENDER_EVERY_I
+        }
+        
+        self.discriminator = PPO(policy_class=FeedForwardNN, env=self, **hyperparameters)
+
         # This logger will help us with printing out summaries of each iteration
         self.logger = {
             'discriminator_losses': [],     # losses of discriminator's prediction in current iteration
@@ -58,60 +76,93 @@ class LibinjectionEnv(WafLabelEnv):
     def _get_real_traffic(self): # get a real traffic randomly from HTTP DATASET CSIC 2010
         return random.choice(self.csic_http_traffic_list)
 
-    def _get_fake_url(self, fake_payload):
+    def _get_real_payload(self):
+        real_traffic = self._get_real_traffic()
+        return real_traffic.split('.html?')[1].split()[0]
+
+    def _get_fake_query(self, fake_payload):
         query_parameter = random.choice(self.query_parameter_list)
-        fake_url = const.BASE_URL + '?' + query_parameter + '=' + fake_payload
+        fake_query = query_parameter + '=' + fake_payload
         
-        return fake_url
+        return fake_query
 
     def _get_fake_traffic(self, fake_payload):
         j_session_id = str(binascii.b2a_hex(os.urandom(16)).upper())[2:-1]
-        fake_url = self._get_fake_url(fake_payload)
+        fake_url = const.BASE_URL + '?' + self._get_fake_query(fake_payload)
         fake_traffic = 'Type:Normal,Method:GET,User-Agent:Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko),Pragma:no-cache,Cache-Control:no-cache,Accept:text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5,Accept-encoding:x-gzip, x-deflate, gzip, deflate,Accept-charset:utf-8, utf-8;q=0.5, *;q=0.5,language:en,host:localhost:8080,cookie:JSESSIONID={},content-type:nan,connection:close,lenght:nan,content:nan,classification:0,URL:{} HTTP/1.1'.format(j_session_id, fake_url)
 
         return fake_traffic
 
-    def _get_score_discriminator(self, fake_payload):
-        # Get http traffic
-        real_traffic = self._get_real_traffic()
-        fake_traffic = self._get_fake_traffic(fake_payload)
+    def _get_score_discriminator(self, fake_payload, done=False):
+#         # Get http traffic
+#         real_traffic = self._get_real_traffic()
+#         fake_traffic = self._get_fake_traffic(fake_payload)
 
-        # Score real traffic by Discriminator
-        real_input = self.tokenizer(real_traffic, padding='max_length', max_length=const.MAX_TOKEN_LENGTH, truncation=True, return_tensors="pt")
-        real_input_ids = real_input['input_ids'].to(self.device)
-        real_attention_mask = real_input['attention_mask'].to(self.device)
-        real_output = self.discriminator(real_input_ids, real_attention_mask)
-        self.batch_real_output.append(real_output.cpu().detach().numpy())
+#         # Score real traffic by Discriminator
+#         real_input = self.tokenizer(real_traffic, padding='max_length', max_length=const.MAX_TOKEN_LENGTH, truncation=True, return_tensors="pt")
+#         real_input_ids = real_input['input_ids'].to(self.device)
+#         real_attention_mask = real_input['attention_mask'].to(self.device)
+#         real_output = self.discriminator(real_input_ids, real_attention_mask)
+#         self.batch_real_output.append(real_output.cpu().detach().numpy())
 
-        # Score fake traffic by Discriminator which is generated by agent (Generator)
-        fake_input = self.tokenizer(fake_traffic, padding='max_length', max_length=const.MAX_TOKEN_LENGTH, truncation=True, return_tensors="pt")
-        fake_input_ids = fake_input['input_ids'].to(self.device)
-        fake_attention_mask = fake_input['attention_mask'].to(self.device)
-        fake_output = self.discriminator(fake_input_ids, fake_attention_mask)
-        self.batch_fake_output.append(fake_output.cpu().detach().numpy())
+#         # Score fake traffic by Discriminator which is generated by agent (Generator)
+#         fake_input = self.tokenizer(fake_traffic, padding='max_length', max_length=const.MAX_TOKEN_LENGTH, truncation=True, return_tensors="pt")
+#         fake_input_ids = fake_input['input_ids'].to(self.device)
+#         fake_attention_mask = fake_input['attention_mask'].to(self.device)
+#         fake_output = self.discriminator(fake_input_ids, fake_attention_mask)
+#         self.batch_fake_output.append(fake_output.cpu().detach().numpy())
 
-        return fake_output.squeeze().cpu().detach().item()
+#         return fake_output.squeeze().cpu().detach().item()
+
+        self.discriminator.time_steps += 1
+
+        real_payload = self._get_real_payload()
+        real_obs = self.feature_extractor.extract(real_payload)
+        real_output = self.discriminator.score_real(real_obs, done) # tensor(['reality', 'fakelity'])
+
+        self.discriminator.log['episode'].append(self.discriminator.current_episode)
+        self.discriminator.log['time_steps'].append(self.discriminator.time_steps)
+        self.discriminator.log['payload'].append(real_payload)
+        self.discriminator.log['real_or_fake'].append('real')
+        self.discriminator.log['label'].append(1)
+
+        fake_payload = self._get_fake_query(fake_payload)
+        fake_obs = self.feature_extractor.extract(fake_payload)
+        fake_output = self.discriminator.score_fake(fake_obs, done) # tensor(['reality', 'fakelity'])
+
+        self.discriminator.log['episode'].append(self.discriminator.current_episode)
+        self.discriminator.log['time_steps'].append(self.discriminator.time_steps)
+        self.discriminator.log['payload'].append(fake_payload)
+        self.discriminator.log['real_or_fake'].append('fake')
+        self.discriminator.log['label'].append(0)
+        
+        if done:
+            self.discriminator.current_episode += 1
+
+        return fake_output[1].item()
 
     def update_discriminator(self):
-        real_output = torch.tensor(self.batch_real_output, device=self.device, dtype=torch.float) # torch.Size([batch_size, 1, 1])
-        fake_output = torch.tensor(self.batch_fake_output, device=self.device, dtype=torch.float) # torch.Size([batch_size, 1, 1])
+#         real_output = torch.tensor(self.batch_real_output, device=self.device, dtype=torch.float) # torch.Size([batch_size, 1, 1])
+#         fake_output = torch.tensor(self.batch_fake_output, device=self.device, dtype=torch.float) # torch.Size([batch_size, 1, 1])
 
-        Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
-        valid = Variable(Tensor(len(self.batch_real_output), 1, 1).fill_(1.0), requires_grad=True) # torch.Size([batch_size, 1, 1])
-        fake = Variable(Tensor(len(self.batch_fake_output), 1, 1).fill_(0.0), requires_grad=True) # torch.Size([batch_size, 1, 1])
+#         Tensor = torch.cuda.FloatTensor if self.cuda else torch.FloatTensor
+#         valid = Variable(Tensor(len(self.batch_real_output), 1, 1).fill_(1.0), requires_grad=True) # torch.Size([batch_size, 1, 1])
+#         fake = Variable(Tensor(len(self.batch_fake_output), 1, 1).fill_(0.0), requires_grad=True) # torch.Size([batch_size, 1, 1])
 
-        # Caluculate losses
-        real_loss = self.adversarial_loss(real_output, valid)
-        fake_loss = self.adversarial_loss(fake_output, fake)
-        d_loss = (real_loss + fake_loss) / 2
+#         # Caluculate losses
+#         real_loss = self.adversarial_loss(real_output, valid)
+#         fake_loss = self.adversarial_loss(fake_output, fake)
+#         d_loss = (real_loss + fake_loss) / 2
 
-        # Calculate gradients and perform backward propagation for Discriminator network
-        self.optimizer.zero_grad()
-        d_loss.backward()
-        self.optimizer.step()
+#         # Calculate gradients and perform backward propagation for Discriminator network
+#         self.optimizer.zero_grad()
+#         d_loss.backward()
+#         self.optimizer.step()
         
-        self.batch_real_output = []
-        self.batch_fake_output = []
+#         self.batch_real_output = []
+#         self.batch_fake_output = []
+
+        self.discriminator.update()
         
         # Log actor loss
-        self.logger['discriminator_losses'].append(d_loss.cpu().detach())
+        # self.logger['discriminator_losses'].append(loss)

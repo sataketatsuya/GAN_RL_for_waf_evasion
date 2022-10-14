@@ -106,7 +106,7 @@ class WafEnv(gym.Env):
 
         while True:     # until find one that is SQLi by the interface
             payload = random.choice(self.payload_list)
-            _ = self._check_sqli(payload, check_discriminator=False)
+            _ = self._check_sqli(payload)
             if not self.label:
                 self.orig_payload = self.payload = payload
                 break

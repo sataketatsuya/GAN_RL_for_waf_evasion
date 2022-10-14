@@ -3,6 +3,7 @@ import os
 import const
 
 MAXTURNS = const.MAXTURNS
+TURN_PENALTY = const.TURN_PENALTY
 DATASET = os.path.join(os.path.dirname(__file__), 'data', 'sqli-1k.csv')
 DATASET_single = os.path.join(os.path.dirname(__file__), 'data', 'sqli-1.csv')
 CSIC_DATASET = os.path.join(os.path.dirname(__file__), 'data', 'csic_database.csv')
@@ -13,7 +14,8 @@ register(
     kwargs={
         'payloads_file': DATASET_single,
         'csic_file': CSIC_DATASET,
-        'maxturns': MAXTURNS
+        'maxturns': MAXTURNS,
+        'turn_penalty': TURN_PENALTY,
     }
 )
 
@@ -23,6 +25,7 @@ register(
     kwargs={
         'payloads_file': DATASET,
         'csic_file': CSIC_DATASET,
-        'maxturns': MAXTURNS
+        'maxturns': MAXTURNS,
+        'turn_penalty': TURN_PENALTY,
     }
 )

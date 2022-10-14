@@ -19,21 +19,11 @@ class WafLabelEnv(WafEnv):
     def _get_label_waf(self, payload):
         raise NotImplementedError("_get_label not implemented")
 
-    def _get_score_discriminator(self, payload):
+    def _get_score_discriminator(self, fake_payload, done=False):
         raise NotImplementedError("_get_label not implemented")
 
-    def _check_sqli(self, fake_payload, check_discriminator=True):
-        try:
-            self.label = self._get_label_waf(fake_payload)
-            if check_discriminator:
-                score_discriminator = self._get_score_discriminator(fake_payload)
-            else:
-                score_discriminator = 0
-        except ClassificationFailure:
-            logging.warning("Failed to classify payload: {}".format(colored(repr(self.payload), 'red')))
-            label = 0   # assume evasion due to implementation bug in classifier
-
-        return score_discriminator
+    def _check_sqli(self, payload):
+        self.label = self._get_label_waf(payload)
 
     def step(self, action_index):
         assert self.orig_payload is not None, "please reset() before step()"
@@ -44,21 +34,25 @@ class WafLabelEnv(WafEnv):
         self.observation = self.feature_extractor.extract(self.payload)
 
         win = False
-        # get reward
-        reward = self._check_sqli(self.payload, check_discriminator=self.check_discriminator)
+        reward = 0.0
+        self._check_sqli(self.payload)
 
         if self.label:
-            reward += const.WAF_POSITIVE
+            reward = const.WAF_POSITIVE
             episode_over = True
             win = True
             print("WIN with payload: {}".format(colored(repr(self.payload), 'green')))
         elif self.turns >= self.maxturns:
             # out of turns :(
-            reward += const.WAF_NEGATIVE
+            reward = const.WAF_NEGATIVE
             episode_over = True
         else:
             # reward += 0.0 if self.pre_payload == self.payload else 0.5
             episode_over = False
+
+        if self.check_discriminator:
+            discriminator_score = self._get_score_discriminator(self.payload, done=episode_over)
+            reward = reward * discriminator_score
 
         reward = self._process_reward(reward)
 

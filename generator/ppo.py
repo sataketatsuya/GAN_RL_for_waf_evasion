@@ -4,6 +4,8 @@
             It can be found here: https://spinningup.openai.com/en/latest/_images/math/e62a8971472597f4b014c2da064f636ffe365ba3.svg
 """
 
+import re
+import os
 import gym
 import gym_waf
 import time
@@ -40,13 +42,19 @@ class PPO:
 
         # Initialize hyperparameters for training with PPO
         self._init_hyperparameters(hyperparameters)
-        self.directory_name = 'paper_ep_batch'
+
+        # Log setting
+        self.directory_name = 'multiagent_clip01'
+        os.makedirs(f'./models/generator/{self.directory_name}', exist_ok=True)
+        os.makedirs(f'./models/discriminator/{self.directory_name}', exist_ok=True)
+        os.makedirs(f'./logs/generator/', exist_ok=True)
+        os.makedirs(f'./logs/discriminator/', exist_ok=True)
 
         # Extract environment information
         self.env = env
         self.obs_dim = env.observation_space.shape[0] # 
         self.act_dim = env.action_space.n # 9
-        
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
          # Initialize actor and critic networks
@@ -103,7 +111,7 @@ class PPO:
             batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens = self.rollout()                     # ALG STEP 3
 
             # Calculate how many episodes we collected this batch
-            t_so_far += np.sum(batch_lens)
+            t_so_far += len(batch_lens)
 
             # Increment the number of iterations
             i_so_far += 1
@@ -168,37 +176,16 @@ class PPO:
 
             # Save our model if it's time
             if i_so_far % self.save_freq == 0:
-                torch.save(self.actor.state_dict(), f'./models/{self.directory_name}/ppo_actor.pth')
-                torch.save(self.critic.state_dict(), f'./models/{self.directory_name}/ppo_critic.pth')
+                torch.save(self.actor.state_dict(), f'./models/generator/{self.directory_name}/ppo_actor.pth')
+                torch.save(self.critic.state_dict(), f'./models/generator/{self.directory_name}/ppo_critic.pth')
 
                 if self.env.check_discriminator:
-                    torch.save(self.env.discriminator.state_dict(), f'./models/{self.directory_name}/dicriminator.pth')
+                    torch.save(self.env.discriminator.actor.state_dict(), f'./models/discriminator/{self.directory_name}/ppo_actor.pth')
+                    torch.save(self.env.discriminator.critic.state_dict(), f'./models/discriminator/{self.directory_name}/ppo_critic.pth')
 
-                # Save Logs
-                df = pd.DataFrame()
-                df['episode'] = self.log['episode']
-                df['time_steps'] = self.log['time_steps']
-                df['steps'] = self.log['steps']
-                df['win'] = self.log['win']
-                df['mean_reward'] = self.log['mean_reward']
-                df['original_payload'] = self.log['original_payload']
-                df['payload'] = self.log['payload']
+                self.save_log_to_csv()
 
-                df.to_csv(f'./logs/{self.directory_name}.csv')
-
-        # Save Logs
-        df = pd.DataFrame()
-        df['episode'] = self.log['episode']
-        df['time_steps'] = self.log['time_steps']
-        df['steps'] = self.log['steps']
-        df['win'] = self.log['win']
-        df['mean_reward'] = self.log['mean_reward']
-        df['original_payload'] = self.log['original_payload']
-        df['payload'] = self.log['payload']
-
-        df.to_csv(f'./logs/{self.directory_name}.csv')
-        
-        print(f'Saved to ./logs/{self.directory_name}.csv')
+        self.save_log_to_csv(end=True)
 
     def rollout(self):
         """
@@ -223,10 +210,6 @@ class PPO:
         batch_rews = []
         batch_rtgs = []
         batch_lens = []
-
-        # Episodic data. Keeps track of rewards per episode, will get cleared
-        # upon each new episode
-        ep_rews = []
 
         t = 0 # Keeps track of how many episodes we've run so far this batch
         time_steps = self.logger['t_so_far']
@@ -402,7 +385,7 @@ class PPO:
         """
         # Initialize default values for hyperparameters
         # Algorithm hyperparameters
-        self.timesteps_per_batch = 4800                 # Number of timesteps to run per batch
+        self.episode_per_batch = 4800                 # Number of timesteps to run per batch
         self.max_timesteps_per_episode = 1600           # Max number of timesteps per episode
         self.n_updates_per_iteration = 5                # Number of times to update actor/critic per iteration
         self.lr = 0.005                                 # Learning rate of actor optimizer
@@ -451,15 +434,17 @@ class PPO:
         avg_ep_lens = np.mean(self.logger['batch_lens'])
         avg_ep_rews = np.mean([np.sum(ep_rews) for ep_rews in self.logger['batch_rews']])
         avg_actor_loss = np.mean([losses.float().mean() for losses in self.logger['total_loss']])
-        avg_discriminator_loss = np.mean([losses.float().mean() for losses in self.env.logger['discriminator_losses']])
         avg_entropy = np.mean([losses.float().mean() for losses in self.logger['entropy']])
+        avg_discriminator_loss = np.mean([losses.float().mean() for losses in self.env.discriminator.logger['total_loss']])
+        avg_discriminator_entropy = np.mean([losses.float().mean() for losses in self.env.discriminator.logger['entropy']])
 
         # Round decimal places for more aesthetic logging messages
         avg_ep_lens = str(round(avg_ep_lens, 2))
         avg_ep_rews = str(round(avg_ep_rews, 2))
         avg_actor_loss = str(round(avg_actor_loss, 5))
-        avg_discriminator_loss = str(round(avg_discriminator_loss, 5))
         avg_entropy = str(round(avg_entropy, 5))
+        avg_discriminator_loss = str(round(avg_discriminator_loss, 5))
+        avg_discriminator_entropy = str(round(avg_discriminator_entropy, 5))
 
         # Print logging statements
         print(flush=True)
@@ -467,11 +452,12 @@ class PPO:
         print(f"Average Episodic Length: {avg_ep_lens}", flush=True)
         print(f"Average Episodic Return: {avg_ep_rews}", flush=True)
         print(f"Average Generator Loss: {avg_actor_loss}", flush=True)
+        print(f"Average Generator Entropy: {avg_entropy}", flush=True)
         print(f"Average Discriminator Loss: {avg_discriminator_loss}", flush=True)
-        print(f"Average Entropy: {avg_entropy}", flush=True)
+        print(f"Average Discriminator Entropy: {avg_discriminator_entropy}", flush=True)
         print(f"Episodes So Far: {t_so_far}", flush=True)
         print(f"Iteration took: {delta_t} secs", flush=True)
-        print(Counter(batch_acts), flush=True)
+        print(f"Generator action counter", Counter(batch_acts), flush=True)
         print(f"------------------------------------------------------", flush=True)
         print(flush=True)
 
@@ -479,5 +465,55 @@ class PPO:
         self.logger['batch_lens'] = []
         self.logger['batch_rews'] = []
         self.logger['total_loss'] = []
-        self.env.logger['discriminator_losses'] = []
-        self.env.logger['entropy'] = []
+        self.logger['entropy']    = []
+        self.env.discriminator.logger['total_loss'] = []
+        self.env.discriminator.logger['entropy'] = []
+        
+    def save_log_to_csv(self, end=False):
+        # Save Generator's Logs
+        df = pd.DataFrame()
+        df['episode'] = self.log['episode']
+        df['time_steps'] = self.log['time_steps']
+        df['steps'] = self.log['steps']
+        df['win'] = self.log['win']
+        df['mean_reward'] = self.log['mean_reward']
+        df['original_payload'] = self.log['original_payload']
+        df['payload'] = self.log['payload']
+        df.to_csv(f'./logs/generator/{self.directory_name}.csv')
+
+        # Save Discriminator's Logs
+        df = pd.DataFrame()
+        df['episode'] = self.env.discriminator.log['episode']
+        df['time_steps'] = self.env.discriminator.log['time_steps']
+        df['payload'] = self.env.discriminator.log['payload']
+        df['real_or_fake'] = self.env.discriminator.log['real_or_fake']
+        df['label'] = self.env.discriminator.log['label']
+        df['reward'] = self.env.discriminator.log['reward']
+        df['predict'] = self.env.discriminator.log['predict']
+        df['output_fake'] = self.env.discriminator.log['output_fake']
+        df['output_real'] = self.env.discriminator.log['output_real']
+        df.to_csv(f'./logs/discriminator/{self.directory_name}.csv')
+
+        if end:
+            with open(f'./logs/generator/{self.directory_name}.csv') as f:
+                count = 0
+                data = []
+                previous_i = 0
+                index = 0
+                for line in f:
+                    if count == 0:
+                        data.append(line[:-1])
+                        count = 1
+                    else:
+                        split = line.split(',')
+                        if re.fullmatch('[0-9]+', split[0]):
+                            data.append(line[:-1])
+                        else:
+                            line = data[-1] + line
+                            data[-1] = line[:-1]
+
+            with open(f'./logs/generator/new_{self.directory_name}.csv', mode='w') as f:
+                f.write('\n'.join(data))
+
+            print(f'Saved to ./logs/generator/new_{self.directory_name}.csv')
+            print(f'Saved to ./logs/discriminator/{self.directory_name}.csv')
