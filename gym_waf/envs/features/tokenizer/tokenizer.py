@@ -78,9 +78,9 @@ class TokenizerType:
             numpy ndarray : histogram of tokens
         """
 
-        parsed = list(sqlparse.parse(sql_query)[0].flatten())
+        parsed = list(sqlparse.parse(sql_query)[0].flatten()) # SQLを解析し、リストを返す
         allowed = self._allowed_tokens
-        tokens = self._produce_tokens(parsed)
+        tokens = self._produce_tokens(parsed) # SQL解析後、トークン生成
         dict_token = OrderedDict(zip(allowed, [0 for _ in range(len(allowed))]))
         for t in tokens:
             if t in dict_token:
@@ -145,8 +145,8 @@ class TokenizerTK:
         self.vect_size = len(alt.TOKENS)
 
     def produce_feat_vector(self, sql_query: str, normalize=False):
-        tokens = self._preprocess_input_query(sql_query)
-        token_counts = self._histogram_of_tokens(tokens)
+        tokens = self._preprocess_input_query(sql_query) # 前処理
+        token_counts = self._histogram_of_tokens(tokens) # トークン数カウント
         feature_vector = np.array(token_counts)
         if normalize:
             norm = np.linalg.norm(feature_vector)
@@ -154,13 +154,13 @@ class TokenizerTK:
         return feature_vector 
 
     def _preprocess_input_query(self, query):
-        query = query.strip().upper()
-        query = re.sub(r"( |\t|\n|\r|/\*\*/|`)+", " ", query)
-        query = alt.substitute_sysinfo(query, insert_space=True).strip()
-        query = alt.apply_regexp(query, insert_space=True).strip()
-        query = alt.substitute_punctation(query, insert_space=True).strip()
-        query = re.sub(" +", " ", query).strip()
-        query = alt.normalize_dots(query)
+        query = query.strip().upper() # 大文字変換
+        query = re.sub(r"( |\t|\n|\r|/\*\*/|`)+", " ", query) # 特殊文字削除
+        query = alt.substitute_sysinfo(query, insert_space=True).strip() # システム情報をトークン変数に置換
+        query = alt.apply_regexp(query, insert_space=True).strip() # 正規表現を適用して数値や10進数をトークン変数に置換
+        query = alt.substitute_punctation(query, insert_space=True).strip() # 句読点をトークン変数に置換
+        query = re.sub(" +", " ", query).strip() #　連続するスペースを削除
+        query = alt.normalize_dots(query) # Dotを正規化
         splitted_string = query.split(" ")
         tokens = []
         for t in splitted_string:
@@ -171,6 +171,7 @@ class TokenizerTK:
                     tokens.append("STR")
                 else:
                     tokens.append("CHR")
+
         if not tokens:
             return None
         return tokens
@@ -191,13 +192,13 @@ class TokenizerChr:
         token_counts = self._histogram_of_chars(sql_query)
         feature_vector = np.array(token_counts)
         if normalize:
-            norm = np.linalg.norm(feature_vector)
-            feature_vector = feature_vector / norm
+            norm = np.linalg.norm(feature_vector) # ベクトルのノルムを計算
+            feature_vector = feature_vector / norm # 正規化
         return feature_vector  
 
     def _histogram_of_chars(self, s):
-        hist = [0 for _ in range(0xff)]
-        sb = s.encode()
+        hist = [0 for _ in range(0xff)] # 255次元のベクトル生成
+        sb = s.encode() # バイト列（文字コード）変換
         for c in sb:
             hist[c] = sb.count(c)
         return hist
